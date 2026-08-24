@@ -64,26 +64,51 @@ def register(username: str, password: str) -> dict:
     return result
 
 
-def verify(company_code: str, company_name: str, metric_name: str,
-           report_period: str, reported_value: float, source_name: str) -> dict:
-    """校验一个财务指标是否正确。
+def verify(company_code: str = "", company_name: str = "", metric_name: str = "",
+           report_period: str = "2024-12-31", reported_value: float = None,
+           source_name: str = "", scope: str = "metric") -> dict:
+    """统一入口：按参数自动分派（调用方不需要知道内部有几个引擎）。
 
-    参数：
-      company_code   公司代码（如 601012）
-      company_name   公司名（如 隆基绿能）
-      metric_name    指标名（如 归母净利润，必须精确、无空格）
-      report_period  报告期（如 2024-12-31 或 2024 或 2024Q4）
-      reported_value 客户 AI 给出的值（元）
-      source_name    来源（如 akshare / ifind / 某数仓）
+    两种用法：
+      1. 单指标校验（默认）：给出 metric_name + reported_value
+         verify(company_code="601012", company_name="隆基绿能",
+                metric_name="归母净利润", report_period="2024-12-31",
+                reported_value=-8592102400.42, source_name="akshare")
+      2. 三大报表勾稽复核：只给公司 + 报告期，不给指标
+         verify(company_code="600519", company_name="贵州茅台",
+                report_period="2024-12-31", scope="statements")
+         （或省略 scope——不传 metric_name/reported_value 时自动进勾稽模式）
 
-    返回：{ok, method, tier, verdict, confidence, reference, evidence, ...}
+    返回：{ok, ...}，两种模式字段不同（metric: verdict/confidence/reference；
+          statements: checks/all_pass/failed_count）。
     """
-    # 第一次使用（空 key / 占位符）→ 自动匿名注册，一次性走完，无需用户输入
+    # 自动分派：没给指标和数值 → 勾稽复核
+    if scope == "metric" and not metric_name and reported_value is None:
+        scope = "statements"
+
+    if scope == "statements":
+        return _verify_statements(company_code, company_name, report_period)
+    return _verify_metric(company_code, company_name, metric_name,
+                          report_period, reported_value, source_name)
+
+
+def _ensure_key() -> str:
+    """第一次使用（空 key / 占位符）→ 自动匿名注册，一次性走完，无需用户输入。"""
+    global API_KEY
     if not API_KEY or API_KEY == "your-alioth-key":
         reg = register_anonymous()
         if not reg.get("ok"):
-            return {"ok": False, "error_code": "register_required",
-                    "error": "匿名注册失败，请手动调用 register(username, password)"}
+            return ""
+        API_KEY = reg.get("api_key", API_KEY)
+    return API_KEY
+
+
+def _verify_metric(company_code: str, company_name: str, metric_name: str,
+                   report_period: str, reported_value: float, source_name: str) -> dict:
+    """校验一个财务指标是否正确（内部函数，外部走 verify() 统一入口）。"""
+    if not _ensure_key():
+        return {"ok": False, "error_code": "register_required",
+                "error": "匿名注册失败，请手动调用 register(username, password)"}
 
     payload = {
         "api_key": API_KEY, "company_code": company_code,
@@ -103,6 +128,24 @@ def verify(company_code: str, company_name: str, metric_name: str,
     from service.server import verify_metric as _verify
     return _verify(API_KEY, company_code, company_name, metric_name,
                    report_period, reported_value, source_name)
+
+
+def _verify_statements(company_code: str, company_name: str, report_period: str) -> dict:
+    """三大报表勾稽复核（内部函数，外部走 verify() 统一入口）。
+
+    不需要 api_key（勾稽是纯算术，100% 确定性，免费开放）。
+    """
+    payload = {"company_code": company_code, "company_name": company_name,
+               "report_period": report_period}
+    if BASE_URL:
+        import requests
+        resp = requests.post(f"{BASE_URL}/verify_statements", json=payload, timeout=120)
+        resp.raise_for_status()
+        return resp.json()
+
+    sys.path.insert(0, str(_HERE.parent))
+    from service.server import verify_statements as _verify
+    return _verify(company_name, company_code, report_period)
 
 
 if __name__ == "__main__":
