@@ -69,10 +69,25 @@ async function verify(company_code, company_name, metric_name, report_period, re
       return { ok: false, error_code: 'register_required', error: '匿名注册失败，请手动 register(username, password)' };
     }
   }
+  // 自动分派：不给指标和数值 → 三大报表勾稽复核
+  if (!metric_name && (reported_value === undefined || reported_value === null)) {
+    return _post('/verify_statements', { company_code, company_name, report_period });
+  }
   return _post('/verify_metric', {
     api_key: API_KEY, company_code, company_name, metric_name,
     report_period, reported_value, source_name,
   });
 }
 
-module.exports = { verify, register, register_anonymous };
+/** 文档核验：paste 研报/文档全文 → 抽取财务数字 → 值层核验 + 文档内部勾稽。 */
+async function verifyDoc(report_text) {
+  if (!API_KEY || API_KEY === 'your-alioth-key') {
+    const reg = await register_anonymous();
+    if (!reg || !reg.ok) {
+      return { ok: false, error_code: 'register_required', error: '匿名注册失败，请手动 register(username, password)' };
+    }
+  }
+  return _post('/verify_report', { api_key: API_KEY, report_text });
+}
+
+module.exports = { verify, verifyDoc, register, register_anonymous };

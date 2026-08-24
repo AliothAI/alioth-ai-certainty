@@ -148,6 +148,31 @@ def _verify_statements(company_code: str, company_name: str, report_period: str)
     return _verify(company_name, company_code, report_period)
 
 
+def verify_doc(report_text: str) -> dict:
+    """文档核验：paste 一份研报/文档全文 → 抽取所有财务数字 → 值层核验 + 文档内部勾稽。
+
+    两层结果：
+      results          每个数字对不对（对基准，含正确值 + 溯源）
+      doc_articulation 文档自述科目勾稽（文档自己跟自己对不对得上——
+                       AI 生成文档常「每个数都对、拼在一起断裂」）
+    """
+    if not _ensure_key():
+        return {"ok": False, "error_code": "register_required",
+                "error": "匿名注册失败，请手动调用 register(username, password)"}
+    payload = {"api_key": API_KEY, "report_text": report_text}
+    if BASE_URL:
+        import requests
+        resp = requests.post(f"{BASE_URL}/verify_report", json=payload, timeout=180)
+        resp.raise_for_status()
+        return resp.json()
+    sys.path.insert(0, str(_HERE.parent))
+    from service.api import verify_report as _vr
+    class _Req:  # 本地模式直接构造请求对象
+        api_key = API_KEY
+        report_text = report_text
+    return _vr(_Req())
+
+
 if __name__ == "__main__":
     print("Alioth 确定性校验 skill —— 请在 AI 客户端里调用 verify() 函数，"
           "或参考 SKILL.md 用法。")

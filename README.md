@@ -32,13 +32,19 @@ cp -r alioth-ai-certainty ~/.claude/skills/
 
 返回六条勾稽恒等式的逐条判定（总资产=负债+权益 / 现金三流合计 / 未分配利润滚动等），纯算术 100% 确定性，不需要 key。
 
+**场景三：文档核验**
+
+> 「帮我核对这份研报里的财务数据」（paste 文档内容）
+
+两层结果：每个数字对基准核验（值层）+ 文档自述科目互相验证（勾稽层——每个数都对、拼在一起断裂也能抓出来）。
+
 ## 文件说明
 
 | 文件 | 说明 |
 |---|---|
 | `SKILL.md` | skill 定义（触发词、用法） |
-| `call.py` | Python 客户端 |
-| `call-node.js` | Node.js 客户端（零依赖，推荐） |
+| `call.py` | Python 客户端（verify 统一入口 + verify_doc） |
+| `call-node.js` | Node.js 客户端（零依赖，推荐；verify 自动分派 + verifyDoc） |
 | `mcp_config.json` | 配置（首次使用自动填充 key） |
 
 ## 服务地址
