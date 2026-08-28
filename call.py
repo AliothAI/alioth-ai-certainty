@@ -103,6 +103,28 @@ def _ensure_key() -> str:
     return API_KEY
 
 
+def _post_with_selfheal(path: str, payload: dict, timeout: int) -> dict:
+    """POST + key 自愈：key_not_found / key_expired 时自动重注册一次并重试。
+
+    场景：skill 包跨环境拷贝（如从开发机带走 config），key 在目标服务器上不存在；
+    或 key 过期。与其把错误原样透传把用户卡死，不如静默换一把新 key 重试一次。
+    只重试一次，避免死循环。
+    """
+    import requests
+    payload = dict(payload)
+    resp = requests.post(f"{BASE_URL}{path}", json=payload, timeout=timeout)
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("error_code") in ("key_not_found", "key_expired") and payload.get("api_key"):
+        reg = register_anonymous()
+        if reg.get("ok"):
+            payload["api_key"] = API_KEY
+            resp = requests.post(f"{BASE_URL}{path}", json=payload, timeout=timeout)
+            resp.raise_for_status()
+            result = resp.json()
+    return result
+
+
 def _verify_metric(company_code: str, company_name: str, metric_name: str,
                    report_period: str, reported_value: float, source_name: str) -> dict:
     """校验一个财务指标是否正确（内部函数，外部走 verify() 统一入口）。"""
@@ -118,10 +140,7 @@ def _verify_metric(company_code: str, company_name: str, metric_name: str,
     }
 
     if BASE_URL:
-        import requests
-        resp = requests.post(f"{BASE_URL}/verify_metric", json=payload, timeout=60)
-        resp.raise_for_status()
-        return resp.json()
+        return _post_with_selfheal("/verify_metric", payload, timeout=60)
 
     # 本地开发模式：skill 在 alioth-engine 项目内时，直接 import 引擎
     sys.path.insert(0, str(_HERE.parent))
@@ -148,28 +167,34 @@ def _verify_statements(company_code: str, company_name: str, report_period: str)
     return _verify(company_name, company_code, report_period)
 
 
-def verify_doc(report_text: str) -> dict:
+def verify_doc(report_text: str, confirm_companies: list = None) -> dict:
     """文档核验：paste 一份研报/文档全文 → 抽取所有财务数字 → 值层核验 + 文档内部勾稽。
 
-    两层结果：
+    参数：
+      report_text       文档全文
+      confirm_companies [{mention, code}]——公司归属失败（company_unresolved）时，
+                        用户从候选清单确认后回传，参与第二次抽取归属
+
+    三层结果：
       results          每个数字对不对（对基准，含正确值 + 溯源）
       doc_articulation 文档自述科目勾稽（文档自己跟自己对不对得上——
                        AI 生成文档常「每个数都对、拼在一起断裂」）
+      doc_consistency  叙述性数字互证（同比基数一致/构成包含——值层全对也能抓拼装断裂）
     """
     if not _ensure_key():
         return {"ok": False, "error_code": "register_required",
                 "error": "匿名注册失败，请手动调用 register(username, password)"}
     payload = {"api_key": API_KEY, "report_text": report_text}
+    if confirm_companies:
+        payload["confirm_companies"] = confirm_companies
     if BASE_URL:
-        import requests
-        resp = requests.post(f"{BASE_URL}/verify_report", json=payload, timeout=180)
-        resp.raise_for_status()
-        return resp.json()
+        return _post_with_selfheal("/verify_report", payload, timeout=300)
     sys.path.insert(0, str(_HERE.parent))
     from service.api import verify_report as _vr
     class _Req:  # 本地模式直接构造请求对象
         api_key = API_KEY
         report_text = report_text
+        confirm_companies = confirm_companies or None
     return _vr(_Req())
 
 

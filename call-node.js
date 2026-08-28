@@ -25,7 +25,7 @@ function _writeKey(key) {
   fs.writeFileSync(path.join(HERE, 'mcp_config.json'), JSON.stringify(cfg, null, 2), 'utf8');
 }
 
-function _post(pathname, payload) {
+function _post(pathname, payload, timeoutSec = 60) {
   const url = new URL(BASE_URL + pathname);
   const lib = url.protocol === 'https:' ? https : http;
   const body = JSON.stringify(payload || {});
@@ -35,6 +35,7 @@ function _post(pathname, payload) {
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname,
       method: 'POST',
+      timeout: timeoutSec * 1000,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
     }, (res) => {
       let data = '';
@@ -42,6 +43,7 @@ function _post(pathname, payload) {
       res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
     });
     req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error(`请求超时（${timeoutSec}s）：${pathname}`)); });
     req.write(body);
     req.end();
   });
@@ -79,15 +81,20 @@ async function verify(company_code, company_name, metric_name, report_period, re
   });
 }
 
-/** 文档核验：paste 研报/文档全文 → 抽取财务数字 → 值层核验 + 文档内部勾稽。 */
-async function verifyDoc(report_text) {
+/** 文档核验：paste 研报/文档全文 → 抽取财务数字 → 值层核验 + 勾稽 + 叙述自洽。
+ *  confirm_companies: [{mention, code}]——首次返回 company_unresolved 后用户确认回传。 */
+async function verifyDoc(report_text, confirm_companies = null) {
   if (!API_KEY || API_KEY === 'your-alioth-key') {
     const reg = await register_anonymous();
     if (!reg || !reg.ok) {
       return { ok: false, error_code: 'register_required', error: '匿名注册失败，请手动 register(username, password)' };
     }
   }
-  return _post('/verify_report', { api_key: API_KEY, report_text });
+  const payload = { api_key: API_KEY, report_text };
+  if (confirm_companies && confirm_companies.length) {
+    payload.confirm_companies = confirm_companies;
+  }
+  return _post('/verify_report', payload, 300);
 }
 
 module.exports = { verify, verifyDoc, register, register_anonymous };
